@@ -35,10 +35,7 @@ def init(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass, channels_last=Tr
         return init
 
     def init_groups(x, weights):
-        Lt = weights.shape[2]
-        tmp = [weights[:, :, i, ...] for i in range(Lt)]
-        tmp = torch.cat(tmp, dim=0)
-        x.data = tmp
+        x.data = weights.movedim(2, 0).flatten(0,1)
         return x
 
     def init_bias(x, bias):

@@ -156,9 +156,6 @@ class Conv4d_groups(nn.Module):
         self.bias = (nn.Parameter(torch.randn(out_channels)) if bias
                                  else self.register_parameter('bias', None))
 
-        if bias_initializer is not None:
-            bias_initializer(self.bias)
-
         self.conv = self.conv_f(in_channels=in_channels*self.kernel_size[0],
                                 out_channels=self.out_channels*self.kernel_size[0],
                                 bias=False,
@@ -167,17 +164,18 @@ class Conv4d_groups(nn.Module):
                                 padding_mode=self.padding_mode,
                                 groups=self.kernel_size[0],
                                 dtype=self.dtype, device=self.device)
+
         # Weights and biases intialization
-        self.reset_parameters()
+        if bias_initializer is not None:
+            bias_initializer(self.bias)
+        if kernel_initializer is not None:
+            kernel_initializer(self.conv.weight)
+        if bias_initializer is None and kernel_initializer is None:
+            self.reset_parameters()
 
         if channels_last:
             channels_last = [torch.channels_last, torch.channels_last_3d][Nd-3]
             self.conv.to(memory_format=channels_last)
-
-        """
-        if kernel_initializer is not None:
-            kernel_initializer(self.conv.weight)
-        """
 
     def do_padding(self, input):
         (b, c_i) = tuple(input.shape[0:2])

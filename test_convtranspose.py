@@ -1,3 +1,4 @@
+import functools
 import pytest
 import numpy as np
 import torch
@@ -23,18 +24,36 @@ def test_correctness_convtransposeNd(Nd, test_numbers):
 
     native_convtranspose = (torch.nn.ConvTranspose2d, torch.nn.ConvTranspose3d)[Nd - 2]
 
-    convT1 = native_convtranspose(in_channels, out_channels, 
-                                  kernel_size, stride=stride, padding=0, 
-                                  output_padding=0, groups=1, bias=True, dilation=1, 
-                                  padding_mode='zeros', device=device, dtype=dtype)
-    convT2 = ConvTransposeNd_groups(in_channels, out_channels, 
-                                    kernel_size, stride=stride, padding=0, Nd=Nd,
-                                    output_padding=0, groups=1, bias=True, dilation=1, 
-                                    padding_mode='zeros', device=device, dtype=dtype)
+    def init_groups(x, weights):
+        x.data = weights
+        return x
+
+    def init_bias(x, bias):
+        x.data = bias
+        return x
+
+    convT1 = native_convtranspose(
+        in_channels, out_channels,
+        kernel_size, stride=stride, padding=0,
+        output_padding=0, groups=1, bias=True, dilation=1,
+        padding_mode='zeros', device=device, dtype=dtype)
 
     # Set the weight and biases to be the same
-    convT2.weight = convT1.weight
-    convT2.bias = convT1.bias
+    paramsT1 = dict(convT1.named_parameters())
+    kernel_initializer = functools.partial(
+        init_groups,
+        weights=paramsT1['weight']
+    )
+    bias_initializer = lambda x: init_bias(x, paramsT1['bias'])
+
+    convT2 = ConvTransposeNd_groups(
+        in_channels, out_channels,
+        kernel_size, stride=stride, padding=0, Nd=Nd,
+        output_padding=0, groups=1, bias=True, dilation=1,
+        padding_mode='zeros',
+        kernel_initializer=kernel_initializer,
+        bias_initializer=bias_initializer,
+        device=device, dtype=dtype)
 
     test_input = torch.randn([batch_size, in_channels, *lattice_size], device=device, dtype=dtype)
 

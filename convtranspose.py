@@ -16,6 +16,8 @@ class ConvTransposeNd_groups(nn.Module):
                  groups: int = 1,
                  bias: bool = True,
                  Nd: int = 4,
+                 bias_initializer=None,
+                 kernel_initializer=None,
                  device=None, dtype=None):
         super(ConvTransposeNd_groups, self).__init__()
 
@@ -52,7 +54,12 @@ class ConvTransposeNd_groups(nn.Module):
         self.bias = nn.Parameter(
                       torch.randn(out_channels, device=device, dtype=dtype)
                       if bias else self.register_parameter('bias', None))
-        self.reset_parameters()
+        if bias_initializer is not None:
+            bias_initializer(self.bias)
+        if kernel_initializer is not None:
+            kernel_initializer(self.weight)
+        if bias_initializer is None and kernel_initializer is None:
+            self.reset_parameters()
 
     def forward(self, input):
         # either (B, C, L_1, L_2, ...) or (C, L_1, L_2, ...)
