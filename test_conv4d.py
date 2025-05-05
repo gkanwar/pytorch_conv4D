@@ -20,7 +20,7 @@ except:
 torch.set_default_dtype(torch.float64)
 
 
-def init(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass, channels_last=True):
+def init(inChans, outChans, L, Nd, bs, ks, isBias, padding_mode, Conv4dClass, channels_last=True):
     def init_broadcast(weights):
         def wgen(weights):
             for i in range(weights.shape[2]):
@@ -44,7 +44,6 @@ def init(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass, channels_last=Tr
 
     assert ks % 2 == 1, 'Since PT 1.5 works only with odd kernel size'
 
-    padding_mode = 'circular'
     mf = [torch.channels_last, torch.channels_last_3d][Nd-2] if channels_last else torch.contiguous_format
     x = torch.randn(bs, inChans, *((L,)*Nd)).to(device)
     x = x.to(memory_format=mf)
@@ -59,7 +58,7 @@ def init(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass, channels_last=Tr
         outChans,
         Nd=Nd,
         kernel_size=ks,
-        padding=ks-1,
+        padding=(ks-1)//2,
         bias=isBias,
         padding_mode=padding_mode,
         kernel_initializer=
@@ -85,15 +84,17 @@ def init(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass, channels_last=Tr
 # ks = 2 is not working due to bug in pytorch.nn.conv2d with padding=1
 @pytest.mark.parametrize('ks', [3, 5, 7])
 @pytest.mark.parametrize('isBias', [True, False])
+@pytest.mark.parametrize('padding_mode', ['circular', 'zeros'])
 @pytest.mark.parametrize('Conv4dClass', [Conv4d_groups, Conv4d_broadcast])
 @pytest.mark.parametrize('channels_last', [True, False])
-def test_convNd(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass, channels_last):
+def test_convNd(inChans, outChans, L, Nd, bs, ks, isBias, padding_mode, Conv4dClass, channels_last):
     torch.backends.cudnn.deterministic = True
     torch.backends.cudnn.benchmark = False
-    _data, _convPt, _convNd = init(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass)
+    _data, _convPt, _convNd = init(inChans, outChans, L, Nd, bs, ks, isBias, padding_mode, Conv4dClass)
     outPT = _convPt(_data)
     out = _convNd(_data)
 
+    assert outPT.shape == out.shape
     diff = torch.abs((out-outPT)).max()
     print(f"convNd max error: {diff:.2g}")
     assert diff < 1e-5, f'err: {diff}'

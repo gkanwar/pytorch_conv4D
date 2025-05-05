@@ -18,12 +18,11 @@ class Conv4d_broadcast(nn.Module):
                  Nd=4,
                  bias_initializer=None,
                  kernel_initializer= None,
-                 channels_last=False,
-                 padding_value=0):
+                 channels_last=False):
         super(Conv4d_broadcast, self).__init__()
 
-        assert padding_mode == 'circular' or padding_mode == 'constant', \
-            'Implemented only for circular or constant padding'
+        assert padding_mode == 'circular' or padding_mode == 'zeros', \
+            'Implemented only for circular or zeros padding'
         assert stride == 1, "not implemented"
         assert dilation == 1, "not implemented"
         assert groups == 1, "not implemented"
@@ -32,10 +31,7 @@ class Conv4d_broadcast(nn.Module):
         if not isinstance(kernel_size, (tuple, list)):
             kernel_size = tuple(kernel_size for _ in range(Nd))
         if not isinstance(padding, (tuple, list)):
-            if padding_mode == 'circular':
-                pad_pair = ((padding+1)//2, padding//2)
-            else:
-                pad_pair = (padding, padding)
+            pad_pair = (padding, padding)
             padding = tuple(pad_pair for _ in range(Nd))
         else:
             assert all(len(pad_pair) == 2 for pad_pair in padding), \
@@ -47,8 +43,9 @@ class Conv4d_broadcast(nn.Module):
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.padding = padding
-        self.padding_mode = padding_mode
-        self.padding_value = padding_value
+        # translate between Conv and F.pad naming conventions
+        self.padding_mode = padding_mode if padding_mode != 'zeros' else 'constant'
+        self.padding_value = 0
         self.use_bias = bias
 
         self.bias = nn.Parameter(torch.randn(out_channels)) if bias else self.register_parameter('bias', None)
@@ -86,7 +83,6 @@ class Conv4d_broadcast(nn.Module):
         return input
 
     def forward(self, input):
-        # if self.padding_mode == 'circular':
         input = self.do_padding(input)
 
         (b, c_i) = tuple(input.shape[0:2])
@@ -111,13 +107,6 @@ class Conv4d_broadcast(nn.Module):
             result += self.bias.reshape(1, self.out_channels, 1)
             result = result.view(resultShape)
 
-        # shift = math.ceil(padding[0] / 2)
-        # result = torch.roll(result, shift, 2)
-        # after we rearranged 3D convolutions we can cut 4th dimention
-        # depending on padding type circular or not
-        # dim_size = size_i[0] + self.padding[0] - size_k[0] + 1
-        # result = result[:, :, :dim_size, ]
-
         return result
 
 
@@ -138,24 +127,30 @@ class Conv4d_groups(nn.Module):
                  dtype=None, device=None):
         super(Conv4d_groups, self).__init__()
 
-        assert padding_mode == 'circular' or padding == 0, 'Implemented only for circular or no padding'
+        assert padding_mode == 'circular' or padding_mode == 'zeros', \
+            'Implemented only for circular or zeros padding'
         assert stride == 1, "not implemented"
         assert dilation == 1, "not implemented"
         assert groups == 1, "not implemented"
         assert Nd <= 4, "not implemented"
-        assert padding == kernel_size - 1, "works only in circular mode"
 
         if not isinstance(kernel_size, tuple):
             kernel_size = tuple(kernel_size for _ in range(Nd))
-        if not isinstance(padding, tuple):
-            padding = tuple(padding for _ in range(Nd))
+        if not isinstance(padding, (tuple, list)):
+            pad_pair = (padding, padding)
+            padding = tuple(pad_pair for _ in range(Nd))
+        else:
+            assert all(len(pad_pair) == 2 for pad_pair in padding), \
+                'Expect padding list in format ((before_1, after_1), ...)'
         self.conv_f = (nn.Conv1d, nn.Conv2d, nn.Conv3d)[Nd - 2]
        
         self.in_channels = in_channels
         self.out_channels = out_channels
         self.kernel_size = kernel_size
         self.padding = padding
-        self.padding_mode = padding_mode
+        # translate between Conv and F.pad naming conventions
+        self.padding_mode = padding_mode if padding_mode != 'zeros' else 'constant'
+        self.padding_value = 0
         self.use_bias = bias
         self.dtype = dtype
         self.device = device
@@ -168,7 +163,7 @@ class Conv4d_groups(nn.Module):
                                 bias=False,
                                 stride=stride,
                                 kernel_size=self.kernel_size[1:],
-                                padding_mode=self.padding_mode,
+                                padding_mode=padding_mode,
                                 groups=self.kernel_size[0],
                                 dtype=self.dtype, device=self.device)
 
@@ -187,27 +182,23 @@ class Conv4d_groups(nn.Module):
     def do_padding(self, input):
         (b, c_i) = tuple(input.shape[0:2])
         size_i = tuple(input.shape[2:])
-        size_p = [size_i[i] + self.padding[i] for i in range(len(size_i))]
+        size_p = [size_i[i] + sum(self.padding[i]) for i in range(len(size_i))]
+        padding = tuple(np.array(self.padding).reshape(-1)[::-1])
         input = F.pad(  # Ls padding
-            input.reshape(b, -1, *size_i[1:]),
-            tuple(np.array(
-                # [(0, self.padding[i+1]) for i in range(len(size_i[1:]))]
-                [((self.padding[i+1]+1)//2, self.padding[i+1]//2) for i in range(len(size_i[1:]))]
-                ).reshape(-1)),
-            'circular',
-            0
-            ).reshape(b, c_i, -1, *size_p[1:])
+            input.reshape(b, -1, *size_i),
+            padding,
+            self.padding_mode,
+            self.padding_value,
+            ).reshape(b, c_i, *size_p)
         return input
 
     def forward(self, input):
-        if self.padding_mode == 'circular':
-            input = self.do_padding(input)
+        input = self.do_padding(input)
 
         (b, c_i) = tuple(input.shape[0:2])
         size_i = tuple(input.shape[2:])
         size_k = self.kernel_size
-        padding = list(self.padding)
-        size_o = (size_i[0], ) + tuple([size_i[x+1] - size_k[x+1] + 1 for x in range(len(size_i[1:]))])
+        size_o = tuple([size_i[x] - size_k[x] + 1 for x in range(len(size_i))])
 
         # size_o = tuple([size_i[x] + padding[x] - size_k[x] + 1 for x in range(len(size_i))])
 
@@ -222,7 +213,7 @@ class Conv4d_groups(nn.Module):
         out = out.reshape(b, size_i[0], self.kernel_size[0], self.out_channels, *size_o[1:])
         out = out.transpose(1, 3)# (bs, Lt, k[0], c_o, ...) -> (bs, c_o, k[0], Lt...)
         out = out.split(1, dim=2)  # (bs, c_o, k[0], Lt...)-> list( (bs, c_o, 1, Lt...) )
-        out = torch.stack([torch.roll(out[i].squeeze(2), -1 * i, 2) for i in range(len(out))], dim=0)
+        out = torch.stack([torch.roll(out[i].squeeze(2), -i, 2) for i in range(len(out))], dim=0)
         result = torch.sum(out, dim=0)
 
         if self.use_bias:
@@ -231,8 +222,6 @@ class Conv4d_groups(nn.Module):
             result += self.bias.reshape(1, self.out_channels, 1)
             result =  result.view(resultShape)
 
-        shift = math.ceil(padding[0] / 2)
-        result = torch.roll(result, shift, 2)
         result = result[:, :, :size_o[0], ]
 
         return result
