@@ -66,9 +66,9 @@ class Conv4d_broadcast(nn.Module):
     def do_padding(self, input):
         (b, c_i) = tuple(input.shape[0:2])
         size_i = tuple(input.shape[2:])
-        size_p = [size_i[i] + self.padding[i] for i in range(len(size_i))]
+        size_p = [size_i[i] + 2*self.padding[i] for i in range(len(size_i))]
         padding = tuple(np.array(
-                [((self.padding[i+1]+1)//2, self.padding[i+1]//2) for i in range(len(size_i[1:]))]
+                [(self.padding[i+1], self.padding[i+1]) for i in range(len(size_i[1:]))]
                 ).reshape(-1)[::-1])
         input = F.pad(  # Ls padding
             input.reshape(b, -1, *size_i[1:]),
@@ -104,11 +104,11 @@ class Conv4d_broadcast(nn.Module):
             result += self.bias.reshape(1, self.out_channels, 1)
             result = result.view(resultShape)
 
-        shift = math.ceil(padding[0] / 2)
+        shift = padding[0]
         result = torch.roll(result, shift, 2)
         # after we rearranged 3D convolutions we can cut 4th dimention
         # depending on padding type circular or not
-        dim_size = size_i[0] + self.padding[0] - size_k[0] + 1
+        dim_size = size_i[0] + 2*self.padding[0] - size_k[0] + 1
         result = result[:, :, :dim_size, ]
 
         return result
@@ -136,7 +136,7 @@ class Conv4d_groups(nn.Module):
         assert dilation == 1, "not implemented"
         assert groups == 1, "not implemented"
         assert Nd <= 4, "not implemented"
-        assert padding == kernel_size - 1, "works only in circular mode"
+        # assert padding == kernel_size - 1, "works only in circular mode"
 
         if not isinstance(kernel_size, tuple):
             kernel_size = tuple(kernel_size for _ in range(Nd))
@@ -180,12 +180,12 @@ class Conv4d_groups(nn.Module):
     def do_padding(self, input):
         (b, c_i) = tuple(input.shape[0:2])
         size_i = tuple(input.shape[2:])
-        size_p = [size_i[i] + self.padding[i] for i in range(len(size_i))]
+        size_p = [size_i[i] + 2*self.padding[i] for i in range(len(size_i))]
         input = F.pad(  # Ls padding
             input.reshape(b, -1, *size_i[1:]),
             tuple(np.array(
                 # [(0, self.padding[i+1]) for i in range(len(size_i[1:]))]
-                [((self.padding[i+1]+1)//2, self.padding[i+1]//2) for i in range(len(size_i[1:]))]
+                [(self.padding[i+1], self.padding[i+1]) for i in range(len(size_i[1:]))]
                 ).reshape(-1)),
             'circular',
             0
@@ -224,7 +224,7 @@ class Conv4d_groups(nn.Module):
             result += self.bias.reshape(1, self.out_channels, 1)
             result =  result.view(resultShape)
 
-        shift = math.ceil(padding[0] / 2)
+        shift = padding[0]
         result = torch.roll(result, shift, 2)
         result = result[:, :, :size_o[0], ]
 

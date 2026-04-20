@@ -59,7 +59,7 @@ def init(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass, channels_last=Tr
         outChans,
         Nd=Nd,
         kernel_size=ks,
-        padding=ks-1,
+        padding=(ks-1)//2,
         bias=isBias,
         padding_mode=padding_mode,
         kernel_initializer=
@@ -151,7 +151,7 @@ def run_4d_benchmark(inChans, outChans, L, bs, ks, isBias, Conv4dClass, channels
     mf = torch.channels_last_3d if channels_last else torch.contiguous_format
     _data = torch.randn(bs, inChans, *((L,)*Nd)).to(device) #.to(memory_format=mf)
     _convNd = Conv4dClass(
-        inChans, outChans, Nd=Nd, kernel_size=ks, padding=ks-1, bias=isBias,
+        inChans, outChans, Nd=Nd, kernel_size=ks, padding=(ks-1)//2, bias=isBias,
         padding_mode='circular', channels_last=channels_last).to(device)
 
     times = np.array(
