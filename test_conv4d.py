@@ -100,6 +100,104 @@ def test_convNd(inChans, outChans, L, Nd, bs, ks, isBias, padding_mode, Conv4dCl
     assert diff < 1e-5, f'err: {diff}'
 
 
+def _make_equivalent_conv4d(kernel, bias, padding, padding_mode):
+    kernel_slices = iter(kernel.unbind(dim=2))
+
+    def init_broadcast(parameter):
+        parameter.data.copy_(next(kernel_slices))
+
+    def init_groups(parameter):
+        parameter.data.copy_(kernel.movedim(2, 0).flatten(0, 1))
+
+    def init_bias(parameter):
+        parameter.data.copy_(bias)
+
+    common = dict(
+        in_channels=kernel.shape[1],
+        out_channels=kernel.shape[0],
+        kernel_size=kernel.shape[2:],
+        padding=padding,
+        padding_mode=padding_mode,
+        bias=True,
+        bias_initializer=init_bias,
+        Nd=4,
+    )
+    broadcast = Conv4d_broadcast(
+        **common,
+        kernel_initializer=init_broadcast,
+    )
+    groups = Conv4d_groups(
+        **common,
+        kernel_initializer=init_groups,
+    )
+    return broadcast, groups
+
+
+@pytest.mark.parametrize('padding_mode', ['circular', 'zeros'])
+def test_conv4d_implementations_are_equivalent(padding_mode):
+    in_channels = 2
+    out_channels = 2
+    kernel_size = 3
+    kernel = torch.arange(
+        out_channels * in_channels * kernel_size**4,
+        dtype=torch.float64,
+    ).reshape(out_channels, in_channels, *((kernel_size,) * 4)) % 7 - 3
+    bias = torch.arange(out_channels, dtype=torch.float64) - 1
+    broadcast, groups = _make_equivalent_conv4d(
+        kernel, bias, padding=1, padding_mode=padding_mode
+    )
+    x = (
+        torch.arange(2 * in_channels * 4**4, dtype=torch.float64)
+        .reshape(2, in_channels, 4, 4, 4, 4)
+        % 5
+        - 2
+    ).requires_grad_()
+
+    broadcast_output = broadcast(x)
+    groups_output = groups(x)
+
+    assert torch.equal(broadcast_output, groups_output)
+    broadcast_grad, = torch.autograd.grad(
+        broadcast_output.sum(), x, retain_graph=True
+    )
+    groups_grad, = torch.autograd.grad(groups_output.sum(), x)
+    assert torch.equal(broadcast_grad, groups_grad)
+
+
+def _reference_pad(x, padding, padding_mode):
+    if padding_mode == 'zeros':
+        flat_padding = tuple(
+            value for pad_pair in reversed(padding) for value in pad_pair
+        )
+        return torch.nn.functional.pad(x, flat_padding, mode='constant', value=0)
+
+    for dim, (before, after) in enumerate(padding, start=2):
+        indices = torch.arange(-before, x.shape[dim] + after)
+        x = x.index_select(dim, indices.remainder(x.shape[dim]))
+    return x
+
+
+@pytest.mark.parametrize('padding_mode', ['circular', 'zeros'])
+def test_conv4d_asymmetric_padding(padding_mode):
+    padding = ((1, 0), (0, 1), (1, 0), (0, 1))
+    kernel = torch.ones(1, 1, 1, 1, 1, 1, dtype=torch.float64)
+    bias = torch.zeros(1, dtype=torch.float64)
+    broadcast, groups = _make_equivalent_conv4d(
+        kernel, bias, padding=padding, padding_mode=padding_mode
+    )
+    x = torch.arange(1 * 1 * 2 * 3 * 2 * 3, dtype=torch.float64).reshape(
+        1, 1, 2, 3, 2, 3
+    )
+    expected = _reference_pad(x, padding, padding_mode)
+
+    broadcast_output = broadcast(x)
+    groups_output = groups(x)
+
+    assert torch.equal(broadcast_output, expected)
+    assert torch.equal(groups_output, expected)
+    assert torch.equal(broadcast_output, groups_output)
+
+
 def compare_time(inChans, outChans, L, Nd, bs, ks, isBias, Conv4dClass, channels_last):
     import torch
     torch.backends.cudnn.deterministic = False

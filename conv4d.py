@@ -5,6 +5,26 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
+def _pad(input, padding, padding_mode, padding_value):
+    if padding_mode == 'circular':
+        for dim, (before, after) in enumerate(padding, start=2):
+            if before == 0 and after == 0:
+                continue
+            pieces = []
+            if before:
+                pieces.append(input.narrow(dim, input.shape[dim] - before, before))
+            pieces.append(input)
+            if after:
+                pieces.append(input.narrow(dim, 0, after))
+            input = torch.cat(pieces, dim=dim)
+        return input
+
+    flat_padding = tuple(
+        value for pad_pair in reversed(padding) for value in pad_pair
+    )
+    return F.pad(input, flat_padding, padding_mode, padding_value)
+
+
 class Conv4d_broadcast(nn.Module):
     def __init__(self, in_channels,
                  out_channels,
@@ -70,17 +90,9 @@ class Conv4d_broadcast(nn.Module):
             self.conv_layers.append(conv_layer)
 
     def do_padding(self, input):
-        (b, c_i) = tuple(input.shape[0:2])
-        size_i = tuple(input.shape[2:])
-        size_p = [size_i[i] + sum(self.padding[i]) for i in range(len(size_i))]
-        padding = tuple(np.array(self.padding).reshape(-1)[::-1])
-        input = F.pad(  # Ls padding
-            input.reshape(b, -1, *size_i),
-            padding,
-            self.padding_mode,
-            self.padding_value,
-            ).reshape(b, c_i, *size_p)
-        return input
+        return _pad(
+            input, self.padding, self.padding_mode, self.padding_value
+        )
 
     def forward(self, input):
         input = self.do_padding(input)
@@ -180,17 +192,9 @@ class Conv4d_groups(nn.Module):
             self.conv.to(memory_format=channels_last)
 
     def do_padding(self, input):
-        (b, c_i) = tuple(input.shape[0:2])
-        size_i = tuple(input.shape[2:])
-        size_p = [size_i[i] + sum(self.padding[i]) for i in range(len(size_i))]
-        padding = tuple(np.array(self.padding).reshape(-1)[::-1])
-        input = F.pad(  # Ls padding
-            input.reshape(b, -1, *size_i),
-            padding,
-            self.padding_mode,
-            self.padding_value,
-            ).reshape(b, c_i, *size_p)
-        return input
+        return _pad(
+            input, self.padding, self.padding_mode, self.padding_value
+        )
 
     def forward(self, input):
         input = self.do_padding(input)
