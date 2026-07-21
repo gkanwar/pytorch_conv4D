@@ -7,3 +7,11 @@ The current repository aims to speed up naive implementations. Using broadcastin
 The code is written only for `stride=1`, `dilation=1`, `groups=1` and zero or circular padding. Tests were done only for a specific set of parameters and no guarantee can be done. Before running add tests for your parameters in `test_conv4d.py`, to run tests use `pytest`. Performance measurement can be done with `ppython -m  pytorch_conv4D.test_conv4d`.
 
 The code was tested using Nvidia GPUs and PyTorch 1.4. 
+
+# Authors
+
+This fork includes a few minor tweaks and clean-ups relative to the upstream.
+Credits for the upstream repository (the bulk of the work) go to:
+
+ * Denis Boyda --- original implementation and majority of development.
+ * Yin Lin --- addition of transposed convolutions.
